@@ -37,6 +37,7 @@ else:
     USING_CYTHON = True
 
 ON_WINDOWS = platform.system() == 'Windows'
+ON_MAC = platform.system() == 'Darwin'
 SYSTEM_LIBSSH2 = bool(os.environ.get('SYSTEM_LIBSSH2', 0)) or ON_WINDOWS
 
 # Only build libssh2 if SYSTEM_LIBSSH2 is not set and running a build
@@ -76,7 +77,9 @@ if USING_CYTHON:
     sys.stdout.write("Cython arguments: %s%s" % (cython_args, os.linesep))
 
 
-runtime_library_dirs = ["$ORIGIN/."] if not SYSTEM_LIBSSH2 else None
+# macOS resolves rpath via @loader_path; ELF platforms use $ORIGIN.
+_rpath_origin = "@loader_path/." if ON_MAC else "$ORIGIN/."
+runtime_library_dirs = [_rpath_origin] if not SYSTEM_LIBSSH2 else None
 _lib_dir = os.path.abspath("./build_dir/src") if not SYSTEM_LIBSSH2 else "/usr/local/lib"
 include_dirs = ["libssh2/include"] if ON_WINDOWS or not SYSTEM_LIBSSH2 else [
     "/usr/local/include",
@@ -99,7 +102,7 @@ for ext in extensions:
     if ext.name == 'ssh2.utils':
         ext.sources.append('ssh2/ext/find_eol.c')
 
-package_data = {'ssh2': ['*.pxd', 'libssh2.so*']}
+package_data = {'ssh2': ['*.pxd', 'libssh2.so*', 'libssh2*.dylib']}
 
 if ON_WINDOWS:
     package_data['ssh2'].extend([

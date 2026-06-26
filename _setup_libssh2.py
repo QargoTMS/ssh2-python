@@ -42,5 +42,13 @@ def build_ssh2():
     check_call('cmake --build . --config Release', shell=True, env=os.environ)
     os.chdir('..')
 
-    for src in glob('build_dir/src/libssh2.so*'):
-        copy2(src, 'ssh2/')
+    # Linux/BSD build .so, macOS builds .dylib - copy whichever exists.
+    # follow_symlinks=False preserves the versioned symlink chain (e.g.
+    # libssh2.1.dylib -> libssh2.1.0.1.dylib); remove any stale destination
+    # first so re-runs don't fail on an existing symlink.
+    for pattern in ('build_dir/src/libssh2.so*', 'build_dir/src/libssh2*.dylib'):
+        for src in glob(pattern):
+            dst = os.path.join('ssh2', os.path.basename(src))
+            if os.path.lexists(dst):
+                os.remove(dst)
+            copy2(src, dst, follow_symlinks=False)
