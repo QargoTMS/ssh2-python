@@ -48,7 +48,13 @@
    to make the BANNER define (used by src/session.c) be a valid SSH
    banner. Release versions have no appended strings and may of course not
    have dashes either. */
-#define LIBSSH2_VERSION "1.11.1"
+/* Qargo-local patch level: no upstream 1.11.2 tag exists yet, so the
+   MAJOR.MINOR.PATCH identity is left at 1.11.1 (matching the upstream
+   tag we vendor from) and this suffix marks that 3 unreleased upstream
+   fix commits (packet_length bound in transport.c, EXT_INFO parsing in
+   packet.c, sftp_symlink() bounds checks in sftp.c) have been hand-ported
+   into our vendored tree ahead of any official release. */
+#define LIBSSH2_VERSION "1.11.1_qargo1"
 
 /* The numeric version number is also available "in parts" by using these
    defines: */
