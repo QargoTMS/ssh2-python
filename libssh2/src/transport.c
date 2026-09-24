@@ -242,6 +242,13 @@ fullpacket(LIBSSH2_SESSION * session, int encrypted /* 1 or 0 */ )
                 unsigned char *decrypt_buffer;
                 int blocksize = session->remote.crypt->blocksize;
 
+                if(p->total_num < mac_len + 4 + (size_t)blocksize) {
+                    LIBSSH2_FREE(session, p->payload);
+                    p->payload = NULL;
+                    return LIBSSH2_ERROR_DECRYPT;
+                }
+                decrypt_size = (ssize_t)(p->total_num - mac_len - 4);
+
                 rc = decrypt(session, p->payload + 4,
                              first_block, blocksize, FIRST_BLOCK);
                 if(rc) {
@@ -249,7 +256,6 @@ fullpacket(LIBSSH2_SESSION * session, int encrypted /* 1 or 0 */ )
                 }
 
                 /* we need buffer for decrypt */
-                decrypt_size = p->total_num - mac_len - 4;
                 decrypt_buffer = LIBSSH2_ALLOC(session, decrypt_size);
                 if(!decrypt_buffer) {
                     return LIBSSH2_ERROR_ALLOC;
@@ -639,8 +645,12 @@ int _libssh2_transport_read(LIBSSH2_SESSION * session)
                 total_num = 4;
 
                 p->packet_length = _libssh2_ntohu32(block);
-                if(p->packet_length < 1)
+                if(p->packet_length < 1) {
                     return LIBSSH2_ERROR_DECRYPT;
+                }
+                else if(p->packet_length > LIBSSH2_PACKET_MAXPAYLOAD) {
+                    return LIBSSH2_ERROR_OUT_OF_BOUNDARY;
+                }
 
                 /* total_num may include size field, however due to existing
                  * logic it needs to be removed after the entire packet is read

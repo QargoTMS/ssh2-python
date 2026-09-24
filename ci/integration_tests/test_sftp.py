@@ -17,8 +17,11 @@
 
 import os
 import platform
+import pwd
 import shutil
 import stat
+import tempfile
+import time
 from sys import version_info
 from unittest import skipUnless
 
@@ -73,7 +76,6 @@ class SFTPTestCase(SSH2TestCase):
     def test_sftp_write(self):
         self.assertEqual(self._auth(), 0)
         sftp = self.session.sftp_init()
-        self.assertTrue(sftp is not None)
         data = b"test file data"
         remote_filename = os.sep.join([os.path.dirname(__file__),
                                        "remote_test_file"])
@@ -91,8 +93,8 @@ class SFTPTestCase(SSH2TestCase):
             written_data = fh.read()
         _stat = os.stat(remote_filename)
         try:
-            self.assertTrue(stat.S_IMODE(_stat.st_mode) > 400)
-            self.assertTrue(fh.closed)
+            # The embedded SFTP server uses an explicit 0022 umask.
+            self.assertEqual(stat.S_IMODE(_stat.st_mode), mode)
             self.assertEqual(data, written_data)
         except Exception:
             raise
@@ -200,8 +202,8 @@ class SFTPTestCase(SSH2TestCase):
     def test_realpath(self):
         self.assertEqual(self._auth(), 0)
         sftp = self.session.sftp_init()
-        self.assertTrue(sftp is not None)
-        self.assertIsNotNone(sftp.realpath('.'))
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+        self.assertEqual(sftp.realpath('.'), os.path.realpath(home))
 
     def test_sftp_symlink_realpath_lstat(self):
         self.assertEqual(self._auth(), 0)
@@ -334,13 +336,32 @@ class SFTPTestCase(SSH2TestCase):
     def test_handle_open_nonblocking(self):
         self._auth()
         sftp = self.session.sftp_init()
+        self.session.set_timeout(3000)
         self.session.set_blocking(False)
+
+        def open_after_wait(path):
+            deadline = time.monotonic() + 5
+            while True:
+                handle = sftp.open(path, 0, 0)
+                if handle != LIBSSH2_ERROR_EAGAIN:
+                    return handle
+                self.assertLess(time.monotonic(), deadline,
+                                "OPEN did not resume")
+                wait_socket(self.sock, self.session, timeout=0.1)
+
         try:
-            fh = sftp.open('fakey fake fake', 0, 0)
-            while fh == LIBSSH2_ERROR_EAGAIN:
-                wait_socket(self.sock, self.session)
-                fh = sftp.open('fakey fake fake', 0, 0)
-        except SFTPProtocolError:
-            pass
-        else:
-            raise Exception("Should have raised SFTPProtocolError")
+            with tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(SFTPProtocolError):
+                    open_after_wait(os.path.join(directory, 'missing'))
+                self.assertEqual(sftp.last_error(), 2)
+                path = os.path.join(directory, 'existing')
+                payload = b'contents after failed OPEN'
+                with open(path, 'wb') as output:
+                    output.write(payload)
+                handle = open_after_wait(path)
+                self.session.set_blocking(True)
+                with handle:
+                    self.assertEqual(
+                        b''.join(data for _, data in handle), payload)
+        finally:
+            self.session.set_blocking(True)
