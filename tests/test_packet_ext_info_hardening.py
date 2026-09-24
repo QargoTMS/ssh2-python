@@ -65,7 +65,8 @@ HARNESS_SOURCE = r"""
 
 int main(int argc, char **argv) {
     if(argc < 2) {
-        fprintf(stderr, "usage: %s <hex-payload>\n", argv[0]);
+        fprintf(stderr, "usage: %s <hex-payload> [expected-algorithms]\n",
+                argv[0]);
         return 3;
     }
 
@@ -93,7 +94,13 @@ int main(int argc, char **argv) {
                                  LIBSSH2_MAC_CONFIRMED, 0);
     printf("%d\n", rc);
     fflush(stdout);
-    return rc == 0 ? 0 : 2;
+    int matches = rc == 0;
+    if(argc > 2) {
+        matches = matches && session->server_sign_algorithms &&
+            strcmp((char *)session->server_sign_algorithms, argv[2]) == 0;
+    }
+    libssh2_session_free(session);
+    return matches ? 0 : 2;
 }
 """
 
@@ -154,9 +161,12 @@ class ExtInfoHardeningTestCase(unittest.TestCase):
 
         shutil.rmtree(cls._tmpdir, ignore_errors=True)
 
-    def _run_packet_add(self, payload):
+    def _run_packet_add(self, payload, expected_algorithms=None):
+        args = [self.harness, payload.hex()]
+        if expected_algorithms is not None:
+            args.append(expected_algorithms.decode('ascii'))
         return subprocess.run(
-            [self.harness, payload.hex()], capture_output=True, timeout=15
+            args, capture_output=True, timeout=15
         )
 
     def test_truncated_ext_info_does_not_crash_and_breaks_cleanly(self):
@@ -195,7 +205,7 @@ class ExtInfoHardeningTestCase(unittest.TestCase):
         """A single, correctly-framed extension pair must still be
         accepted (no regression in the legitimate-server path)."""
         name = b"server-sig-algs"
-        value = b"ssh-ed25519"
+        value = b"ssh-ed25519,rsa-sha2-512,rsa-sha2-256"
         payload = (
             struct.pack(">BI", SSH_MSG_EXT_INFO, 1)
             + struct.pack(">I", len(name))
@@ -203,11 +213,30 @@ class ExtInfoHardeningTestCase(unittest.TestCase):
             + struct.pack(">I", len(value))
             + value
         )
-        proc = self._run_packet_add(payload)
+        proc = self._run_packet_add(payload, expected_algorithms=value)
         self.assertEqual(
             proc.returncode,
             0,
-            "well-formed EXT_INFO packet was rejected: rc=%r stdout=%r "
+            "well-formed EXT_INFO did not preserve the algorithms: "
+            "rc=%r stdout=%r stderr=%r"
+            % (proc.returncode, proc.stdout, proc.stderr),
+        )
+
+    def test_unknown_extensions_preserve_signature_algorithms(self):
+        value = b"rsa-sha2-512,rsa-sha2-256"
+        pairs = [
+            (b"unknown-before@example.test", b""),
+            (b"server-sig-algs", value),
+            (b"unknown-after@example.test", b"ordinary-value"),
+        ]
+        payload = struct.pack(">BI", SSH_MSG_EXT_INFO, len(pairs))
+        for name, extension_value in pairs:
+            for field in (name, extension_value):
+                payload += struct.pack(">I", len(field)) + field
+        proc = self._run_packet_add(payload, expected_algorithms=value)
+        self.assertEqual(
+            proc.returncode, 0,
+            "unknown extensions hid the signature algorithms: rc=%r stdout=%r "
             "stderr=%r" % (proc.returncode, proc.stdout, proc.stderr),
         )
 

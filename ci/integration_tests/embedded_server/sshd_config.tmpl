@@ -12,6 +12,6 @@ MaxStartups 999
 # PerSourcePenaltyExemptList *.*.*.*
 
 AcceptEnv LANG LC_*
-Subsystem sftp internal-sftp
+Subsystem sftp internal-sftp -u 0022
 AuthorizedKeysFile {{parent_dir}}/authorized_keys
 PidFile {{parent_dir}}/{{random_server}}.pid
